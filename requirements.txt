@@ -1,0 +1,8 @@
+opencv-python
+numpy
+pillow
+streamlit
+kociemba
+torch
+torchvision
+imutils
