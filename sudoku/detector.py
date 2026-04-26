@@ -13,61 +13,89 @@ def preprocess(img):
     return thresh
 
 def find_sudoku_contour(thresh):
-    """Find the largest square contour which is the sudoku grid."""
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    """
+    Find the sudoku grid contour using multiple strategies.
+    Returns the best 4-point contour or None.
+    """
+    h, w = thresh.shape
+    min_area = (h * w) * 0.05  # grid must be at least 5% of frame
+
+    contours, _ = cv2.findContours(
+        thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
     for c in contours:
-        peri = cv2.arcLength(c, True)
+        area = cv2.contourArea(c)
+        if area < min_area:
+            break  # remaining contours are too small
+
+        peri  = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+
         if len(approx) == 4:
-            return approx
+            # Check it's roughly square (aspect ratio between 0.7 and 1.3)
+            x, y, cw, ch = cv2.boundingRect(approx)
+            ratio = cw / ch if ch != 0 else 0
+            if 0.7 < ratio < 1.3:
+                return approx
+
     return None
 
 def order_points(pts):
-    """Order points as: top-left, top-right, bottom-right, bottom-left."""
+    """Order points: top-left, top-right, bottom-right, bottom-left."""
     pts = pts.reshape(4, 2).astype("float32")
-    s = pts.sum(axis=1)
+    s    = pts.sum(axis=1)
     diff = np.diff(pts, axis=1)
     return np.array([
-        pts[np.argmin(s)],    # top-left
-        pts[np.argmin(diff)], # top-right
-        pts[np.argmax(s)],    # bottom-right
-        pts[np.argmax(diff)]  # bottom-left
+        pts[np.argmin(s)],     # top-left
+        pts[np.argmin(diff)],  # top-right
+        pts[np.argmax(s)],     # bottom-right
+        pts[np.argmax(diff)]   # bottom-left
     ], dtype="float32")
 
 def warp_perspective(img, contour, size=450):
     """Apply perspective transform to get a top-down view of the grid."""
     pts = order_points(contour)
     dst = np.array([
-        [0, 0], [size-1, 0],
-        [size-1, size-1], [0, size-1]
+        [0, 0],
+        [size-1, 0],
+        [size-1, size-1],
+        [0, size-1]
     ], dtype="float32")
-    M = cv2.getPerspectiveTransform(pts, dst)
+    M      = cv2.getPerspectiveTransform(pts, dst)
     warped = cv2.warpPerspective(img, M, (size, size))
     return warped, M
 
 def extract_cells(warped):
-    """Split the warped grid into 81 individual cells."""
-    cells = []
-    h, w = warped.shape[:2]
-    cell_h, cell_w = h // 9, w // 9
+    """Split warped grid into 81 individual cell images."""
+    cells   = []
+    h, w    = warped.shape[:2]
+    cell_h  = h // 9
+    cell_w  = w // 9
     for row in range(9):
         for col in range(9):
-            y1, y2 = row * cell_h, (row + 1) * cell_h
-            x1, x2 = col * cell_w, (col + 1) * cell_w
-            cell = warped[y1:y2, x1:x2]
-            cells.append(cell)
+            y1 = row * cell_h
+            y2 = (row + 1) * cell_h
+            x1 = col * cell_w
+            x2 = (col + 1) * cell_w
+            cells.append(warped[y1:y2, x1:x2])
     return cells
+
+def draw_contour(frame, contour, color=(0, 255, 0), thickness=3):
+    """Draw detected contour on frame for debugging."""
+    if contour is not None:
+        cv2.drawContours(frame, [contour], -1, color, thickness)
+    return frame
 
 def detect_grid(frame):
     """
-    Main function: takes a frame, returns:
-    - warped: top-down view of sudoku grid (or None)
-    - contour: the detected contour (or None)
-    - M: perspective transform matrix (or None)
+    Main detection function.
+    Returns warped grid image, contour, and transform matrix.
+    All None if no grid found.
     """
-    thresh = preprocess(frame)
-    contour = find_sudoku_contour(thresh)
+    thresh          = preprocess(frame)
+    contour         = find_sudoku_contour(thresh)
     if contour is None:
         return None, None, None
     warped, M = warp_perspective(frame, contour)
