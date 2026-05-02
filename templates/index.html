@@ -292,6 +292,9 @@
         ⚡ Capture & Solve
       </button>
     </div>
+    <button class="btn-secondary" onclick="saveDebug()" style="width:100%;margin-bottom:8px">
+      🔍 Save Debug Images
+    </button>
 
     <div id="status-sudoku" class="status info">Start camera and point at your sudoku puzzle.</div>
     <img id="result-sudoku" class="result-img" alt="Result"/>
@@ -556,6 +559,18 @@ async function solveRubiks() {
   } catch(e) {
     setStatus('rubiks', 'error', '❌ Server error.');
   }
+}
+async function saveDebug() {
+  const imageData = captureFrame('sudoku');
+  setStatus('sudoku', 'loading', '⏳ Saving debug images...');
+  const res  = await fetch('/debug/save', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ image: imageData })
+  });
+  const data = await res.json();
+  setStatus('sudoku', data.success ? 'success' : 'error',
+    data.success ? '✅ ' + data.message : '❌ ' + data.error);
 }
 </script>
 </body>

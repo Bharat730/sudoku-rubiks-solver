@@ -1,141 +1,72 @@
 import cv2
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torchvision import transforms
+import pytesseract
 
-# ── Model Definition ──────────────────────────────────────────────────────────
+# Point to tesseract executable
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
-class DigitCNN(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv1 = nn.Conv2d(1, 32, 3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, 3, padding=1)
-        self.pool  = nn.MaxPool2d(2, 2)
-        self.drop  = nn.Dropout(0.25)
-        self.fc1   = nn.Linear(64 * 7 * 7, 128)
-        self.fc2   = nn.Linear(128, 10)
-
-    def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = self.drop(x)
-        x = x.view(-1, 64 * 7 * 7)
-        x = F.relu(self.fc1(x))
-        x = self.drop(x)
-        return self.fc2(x)
-
-# ── Globals ───────────────────────────────────────────────────────────────────
-
-_model = None
-_transform = transforms.Compose([
-    transforms.ToPILImage(),
-    transforms.Resize((28, 28)),
-    transforms.ToTensor(),
-    transforms.Normalize((0.1307,), (0.3081,))
-])
-
-# ── Training ──────────────────────────────────────────────────────────────────
-
-def train_model(save_path="models/digit_model.pth"):
-    from torchvision import datasets
-    from torch.utils.data import DataLoader
-
-    print("Downloading MNIST and training model...")
-    train_data = datasets.MNIST("models/mnist", train=True, download=True, transform=transforms.Compose([
-        transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))
-    ]))
-    loader = DataLoader(train_data, batch_size=64, shuffle=True)
-
-    model = DigitCNN()
-    opt     = torch.optim.Adam(model.parameters(), lr=0.001)
-    loss_fn = nn.CrossEntropyLoss()
-
-    model.train()
-    for epoch in range(5):
-        total = 0
-        for imgs, labels in loader:
-            opt.zero_grad()
-            loss = loss_fn(model(imgs), labels)
-            loss.backward()
-            opt.step()
-            total += loss.item()
-        print(f"Epoch {epoch+1}/5  loss: {total/len(loader):.4f}")
-
-    torch.save(model.state_dict(), save_path)
-    print(f"Model saved to {save_path}")
-    return model
-
-# ── Loading ───────────────────────────────────────────────────────────────────
-
-def load_model(path="models/digit_model.pth"):
-    global _model
-    _model = DigitCNN()
-    _model.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
-    _model.eval()
-
-def get_model():
-    global _model
-    if _model is None:
-        import os
-        if os.path.exists("models/digit_model.pth"):
-            load_model()
-        else:
-            _model = train_model()
-            _model.eval()
-    return _model
+# Tesseract config — single character, only digits 1-9
+TESS_CONFIG = '--psm 10 --oem 3 -c tessedit_char_whitelist=123456789'
 
 # ── Cell Processing ───────────────────────────────────────────────────────────
 
 def preprocess_cell(cell_bgr):
-    """
-    Clean a single cell image for digit recognition.
-    Returns a clean grayscale 28x28 image ready for the model.
-    """
+    """Clean a single cell for OCR."""
     gray = cv2.cvtColor(cell_bgr, cv2.COLOR_BGR2GRAY)
 
-    # Crop 15% border to remove grid lines
+    # Crop 20% border to remove grid lines
     h, w = gray.shape
-    margin_h, margin_w = int(h * 0.15), int(w * 0.15)
-    gray = gray[margin_h:h-margin_h, margin_w:w-margin_w]
+    mh, mw = int(h * 0.20), int(w * 0.20)
+    gray = gray[mh:h-mh, mw:w-mw]
 
-    # Threshold to get clean black digit on white background
+    # Upscale — tesseract works better on larger images
+    gray = cv2.resize(gray, (84, 84), interpolation=cv2.INTER_CUBIC)
+
+    # Denoise
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
+    # OTSU threshold — clean black digit on white background
+    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # Add white border padding (tesseract needs padding)
+    thresh = cv2.copyMakeBorder(thresh, 10, 10, 10, 10,
+                                cv2.BORDER_CONSTANT, value=255)
     return thresh
 
 def is_empty_cell(thresh):
-    """Return True if cell has no digit."""
-    # Check center region only
+    """Return True if cell has no digit using contour analysis."""
+    contours, _ = cv2.findContours(
+        cv2.bitwise_not(thresh), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
     h, w = thresh.shape
-    cx, cy = w // 2, h // 2
-    region = thresh[cy-8:cy+8, cx-8:cx+8]
-    return cv2.countNonZero(region) < 15
+    area = h * w
+
+    for c in contours:
+        ca = cv2.contourArea(c)
+        if ca > area * 0.02:
+            return False
+    return True
 
 def predict_cell(cell_bgr):
-    """Given a single cell image (BGR), return predicted digit (0 = empty)."""
+    """Given a single cell image, return digit (0 = empty)."""
     thresh = preprocess_cell(cell_bgr)
 
     if is_empty_cell(thresh):
         return 0
 
-    # Resize to 28x28 for model
-    resized = cv2.resize(thresh, (28, 28))
+    try:
+        text = pytesseract.image_to_string(
+            thresh, config=TESS_CONFIG
+        ).strip()
+        if text and text.isdigit() and 1 <= int(text) <= 9:
+            return int(text)
+    except Exception:
+        pass
 
-    tensor = _transform(resized).unsqueeze(0)
-    model  = get_model()
-    with torch.no_grad():
-        out  = model(tensor)
-        pred = out.argmax(dim=1).item()
-
-    # If model predicts 0 for a non-empty cell, treat as empty
-    return pred if pred != 0 else 0
+    return 0
 
 def extract_board(cells):
     """Takes list of 81 cell images, returns 9x9 board."""
-    get_model()
     board = []
     for i in range(9):
         row = []
@@ -144,3 +75,13 @@ def extract_board(cells):
             row.append(digit)
         board.append(row)
     return board
+
+# Kept for compatibility
+def get_model():
+    pass
+
+def load_model(*args, **kwargs):
+    pass
+
+def train_model(*args, **kwargs):
+    pass

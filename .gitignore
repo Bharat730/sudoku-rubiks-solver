@@ -216,3 +216,25 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+venv/
+
+# SSL Certificates (keep private)
+cert.pem
+key.pem
+
+# Debug files
+debug_warped.jpg
+debug_cells/
+test_*.jpg
+
+# Models (too large for GitHub)
+models/mnist/
+
+# VS Code
+.vscode/

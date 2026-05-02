@@ -74,37 +74,79 @@ def solve_sudoku():
         data  = request.get_json()
         frame = decode_image(data["image"])
 
+        print(f"[Sudoku] Frame size: {frame.shape}")
+
         # Detect grid
         warped, contour, M = detect_grid(frame)
         if warped is None:
-            return jsonify({"success": False, "error": "No Sudoku grid detected. Make sure the full grid is visible."})
+            return jsonify({"success": False, "error": "No Sudoku grid detected. Make sure the full grid is visible and well lit."})
+
+        print(f"[Sudoku] Grid detected, warped size: {warped.shape}")
 
         # Extract and recognize digits
         cells = extract_cells(warped)
         board = extract_board(cells)
 
+        print(f"[Sudoku] Detected board:")
+        for row in board:
+            print(row)
+
+        # Check if board is all zeros (recognition failed)
+        total_given = sum(1 for r in board for c in r if c != 0)
+        print(f"[Sudoku] Total given digits detected: {total_given}")
+
+        if total_given < 5:
+            return jsonify({
+                "success": False,
+                "error": f"Only {total_given} digits detected. Try better lighting, hold camera steady, and make sure digits are clear."
+            })
+
         # Solve
         solved = get_solution(board)
         if solved is None:
-            return jsonify({"success": False, "error": "Could not solve puzzle. Try better lighting or clearer digits."})
+            return jsonify({
+                "success": False,
+                "error": f"Could not solve puzzle. {total_given} digits detected — some may be wrong. Try again.",
+                "original_board": board
+            })
+
+        print("[Sudoku] Solved successfully!")
 
         # Overlay solution on original frame
         result_frame = overlay_solution(frame, board, solved, contour)
         result_b64   = encode_image(result_frame)
         warped_b64   = encode_image(warped)
 
-        # Format board for display
-        board_display  = board
-        solved_display = solved
-
         return jsonify({
-            "success":      True,
-            "result_image": result_b64,
-            "warped_image": warped_b64,
-            "original_board": board_display,
-            "solved_board":   solved_display
+            "success":        True,
+            "result_image":   result_b64,
+            "warped_image":   warped_b64,
+            "original_board": board,
+            "solved_board":   solved,
+            "digits_found":   total_given
         })
 
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Server error: {str(e)}"})
+
+@app.route("/debug/save", methods=["POST"])
+def debug_save():
+    """Save warped grid and all 81 cells to disk for inspection."""
+    try:
+        data  = request.get_json()
+        frame = decode_image(data["image"])
+        warped, contour, M = detect_grid(frame)
+        if warped is None:
+            return jsonify({"success": False, "error": "No grid detected"})
+        cv2.imwrite("debug_warped.jpg", warped)
+        cells = extract_cells(warped)
+        import os
+        os.makedirs("debug_cells", exist_ok=True)
+        for i, cell in enumerate(cells):
+            cv2.imwrite(f"debug_cells/cell_{i:02d}.jpg", cell)
+        return jsonify({"success": True, "message": "Saved debug_warped.jpg and debug_cells/"})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
@@ -123,4 +165,4 @@ if __name__ == "__main__":
     print(f"  Server running!")
     print(f"  Open on your phone: http://{local_ip}:5000")
     print(f"{'='*50}\n")
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=False, ssl_context=("cert.pem", "key.pem"))
