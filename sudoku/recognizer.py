@@ -7,6 +7,7 @@ pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tessera
 
 # Tesseract config — single character, only digits 1-9
 TESS_CONFIG = '--psm 10 --oem 3 -c tessedit_char_whitelist=123456789'
+MIN_DIGIT_CONFIDENCE = 10
 
 # ── Cell Processing ───────────────────────────────────────────────────────────
 
@@ -34,32 +35,85 @@ def preprocess_cell(cell_bgr):
     return thresh
 
 def is_empty_cell(thresh):
-    """Return True if cell has no digit using contour analysis."""
-    contours, _ = cv2.findContours(
-        cv2.bitwise_not(thresh), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
-    h, w = thresh.shape
-    area = h * w
+    """Return True if a thresholded cell has no digit-sized component."""
+    inv = cv2.bitwise_not(thresh)
+    num_labels, _, stats, _ = cv2.connectedComponentsWithStats(inv, 8)
 
-    for c in contours:
-        ca = cv2.contourArea(c)
-        if ca > area * 0.02:
+    for label in range(1, num_labels):
+        x, y, w, h, area = stats[label]
+        if area >= 120 and h >= 25 and w >= 8:
             return False
+
     return True
+
+def is_empty_cell_image(cell_bgr):
+    """Return True if the raw cell image has no dark digit-like blob."""
+    gray = cv2.cvtColor(cell_bgr, cv2.COLOR_BGR2GRAY)
+
+    h, w = gray.shape
+    mh, mw = int(h * 0.20), int(w * 0.20)
+    gray = gray[mh:h-mh, mw:w-mw]
+
+    gray = cv2.resize(gray, (84, 84), interpolation=cv2.INTER_CUBIC)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+
+    # Use an absolute dark-pixel threshold so pale paper texture/grid shadows
+    # do not become foreground the way OTSU sometimes makes them.
+    _, mask = cv2.threshold(gray, 120, 255, cv2.THRESH_BINARY_INV)
+    mask = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    )
+
+    num_labels, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    for label in range(1, num_labels):
+        x, y, w, h, area = stats[label]
+        if area >= 120 and h >= 25 and w >= 8:
+            return False
+
+    return True
+
+def read_digit(thresh):
+    """Read one digit from a preprocessed cell using Tesseract confidence."""
+    data = pytesseract.image_to_data(
+        thresh,
+        config=TESS_CONFIG,
+        output_type=pytesseract.Output.DICT
+    )
+
+    best_digit = 0
+    best_conf = -1
+
+    for text, conf in zip(data.get("text", []), data.get("conf", [])):
+        text = (text or "").strip()
+        try:
+            conf = float(conf)
+        except (TypeError, ValueError):
+            conf = -1
+
+        if text.isdigit() and len(text) == 1 and 1 <= int(text) <= 9:
+            if conf > best_conf:
+                best_digit = int(text)
+                best_conf = conf
+
+    if best_conf >= MIN_DIGIT_CONFIDENCE:
+        return best_digit
+
+    return 0
 
 def predict_cell(cell_bgr):
     """Given a single cell image, return digit (0 = empty)."""
+    if is_empty_cell_image(cell_bgr):
+        return 0
+
     thresh = preprocess_cell(cell_bgr)
 
     if is_empty_cell(thresh):
         return 0
 
     try:
-        text = pytesseract.image_to_string(
-            thresh, config=TESS_CONFIG
-        ).strip()
-        if text and text.isdigit() and 1 <= int(text) <= 9:
-            return int(text)
+        return read_digit(thresh)
     except Exception:
         pass
 

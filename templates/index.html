@@ -181,6 +181,61 @@
       border-bottom: 2px solid #6c63ff;
     }
 
+    .history-section {
+      margin-top: 16px;
+      background: #111;
+      border-radius: 10px;
+      padding: 12px;
+      display: none;
+    }
+
+    .history-section h4 {
+      color: #aaa;
+      font-size: 0.9rem;
+      margin-bottom: 10px;
+    }
+
+    .history-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .history-item {
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 10px;
+      background: #151522;
+    }
+
+    .history-meta {
+      color: #888;
+      font-size: 0.75rem;
+      margin-bottom: 8px;
+    }
+
+    .history-board {
+      display: grid;
+      grid-template-columns: repeat(9, 1fr);
+      gap: 1px;
+      background: #555;
+      border-radius: 6px;
+      padding: 2px;
+    }
+
+    .history-cell {
+      background: #1a1a2e;
+      aspect-ratio: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.72rem;
+      font-weight: 700;
+      border-radius: 2px;
+    }
+
+    .history-cell.given { color: #fff; }
+    .history-cell.solved { color: #6c63ff; }
+
     /* ── Debug section ── */
     .debug-section {
       margin-top: 16px;
@@ -305,6 +360,11 @@
         <span style="color:#6c63ff">■</span> Solved
       </p>
       <div class="board" id="board-grid"></div>
+    </div>
+
+    <div class="history-section" id="history-sudoku">
+      <h4>Recent Solved Sudoku Grids</h4>
+      <div class="history-list" id="history-sudoku-list"></div>
     </div>
 
     <div class="debug-section" id="debug-sudoku">
@@ -447,6 +507,7 @@ async function captureSudoku() {
 
       // Render board
       renderBoard(data.original_board, data.solved_board);
+      renderHistory(data.history || []);
 
       // Debug: warped grid
       document.getElementById('debug-sudoku').style.display = 'block';
@@ -482,6 +543,62 @@ function renderBoard(original, solved) {
     }
   }
   document.getElementById('board-wrap').style.display = 'block';
+}
+
+async function loadHistory() {
+  try {
+    const res = await fetch('/history?type=sudoku');
+    const data = await res.json();
+    if (data.success) {
+      renderHistory(data.history || []);
+    }
+  } catch(e) {
+    // History is optional; solving still works if it cannot load.
+  }
+}
+
+function renderHistory(history) {
+  const wrap = document.getElementById('history-sudoku');
+  const list = document.getElementById('history-sudoku-list');
+  list.innerHTML = '';
+
+  if (!history.length) {
+    wrap.style.display = 'none';
+    return;
+  }
+
+  history.forEach(item => {
+    const entry = document.createElement('div');
+    entry.className = 'history-item';
+
+    const meta = document.createElement('div');
+    meta.className = 'history-meta';
+    const when = item.timestamp ? new Date(item.timestamp).toLocaleString() : 'Saved solve';
+    meta.textContent = `${when} · ${item.digits_found || 0} givens`;
+
+    entry.appendChild(meta);
+    entry.appendChild(renderMiniBoard(item.original_board, item.solved_board));
+    list.appendChild(entry);
+  });
+
+  wrap.style.display = 'block';
+}
+
+function renderMiniBoard(original, solved) {
+  const grid = document.createElement('div');
+  grid.className = 'history-board';
+
+  for (let r = 0; r < 9; r++) {
+    for (let c = 0; c < 9; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'history-cell';
+      cell.textContent = solved[r][c];
+      cell.classList.add(original[r][c] !== 0 ? 'given' : 'solved');
+      grid.appendChild(cell);
+    }
+  }
+
+  return grid;
 }
 
 // ══════════════════════════════════════════════════════
@@ -572,6 +689,8 @@ async function saveDebug() {
   setStatus('sudoku', data.success ? 'success' : 'error',
     data.success ? '✅ ' + data.message : '❌ ' + data.error);
 }
+
+loadHistory();
 </script>
 </body>
 </html>

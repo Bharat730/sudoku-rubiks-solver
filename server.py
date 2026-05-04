@@ -2,12 +2,17 @@ import cv2
 import numpy as np
 import base64
 import socket
+import json
+from datetime import datetime
+from pathlib import Path
 from flask import Flask, render_template, request, jsonify
 from sudoku.detector import detect_grid, extract_cells
 from sudoku.recognizer import extract_board, get_model
 from sudoku.solver import get_solution, print_board
 
 app = Flask(__name__)
+HISTORY_FILE = Path("solve_history.jsonl")
+MAX_HISTORY_ITEMS = 20
 
 # ── Preload model on startup ──────────────────────────────────────────────────
 print("Loading digit recognition model...")
@@ -29,6 +34,43 @@ def encode_image(frame):
     _, buffer = cv2.imencode(".jpg", frame)
     b64 = base64.b64encode(buffer).decode("utf-8")
     return f"data:image/jpeg;base64,{b64}"
+
+def save_history(entry):
+    """Append one solved puzzle entry to local JSONL history."""
+    entry = {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        **entry
+    }
+    with HISTORY_FILE.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+    return entry
+
+def load_history(limit=MAX_HISTORY_ITEMS, puzzle_type=None):
+    """Load most recent solved puzzle entries."""
+    if not HISTORY_FILE.exists():
+        return []
+
+    entries = []
+    with HISTORY_FILE.open("r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if puzzle_type is None or entry.get("type") == puzzle_type:
+                entries.append(entry)
+
+    return entries[-limit:][::-1]
+
+def print_solved_grid(original_board, solved_board):
+    """Print solved Sudoku grid with givens and filled values."""
+    print("[Sudoku] Solved grid:")
+    for r in range(9):
+        row = []
+        for c in range(9):
+            value = solved_board[r][c]
+            row.append(str(value) if original_board[r][c] != 0 else f"({value})")
+        print(" ".join(row))
 
 def overlay_solution(frame, original_board, solved_board, contour, img_size=450):
     """Draw solved digits onto frame over empty cells."""
@@ -67,6 +109,14 @@ def overlay_solution(frame, original_board, solved_board, contour, img_size=450)
 @app.route("/")
 def index():
     return render_template("index.html")
+
+@app.route("/history")
+def history():
+    puzzle_type = request.args.get("type")
+    return jsonify({
+        "success": True,
+        "history": load_history(puzzle_type=puzzle_type)
+    })
 
 @app.route("/solve/sudoku", methods=["POST"])
 def solve_sudoku():
@@ -111,6 +161,14 @@ def solve_sudoku():
             })
 
         print("[Sudoku] Solved successfully!")
+        print_solved_grid(board, solved)
+
+        history_entry = save_history({
+            "type": "sudoku",
+            "original_board": board,
+            "solved_board": solved,
+            "digits_found": total_given
+        })
 
         # Overlay solution on original frame
         result_frame = overlay_solution(frame, board, solved, contour)
@@ -123,7 +181,9 @@ def solve_sudoku():
             "warped_image":   warped_b64,
             "original_board": board,
             "solved_board":   solved,
-            "digits_found":   total_given
+            "digits_found":   total_given,
+            "history_entry":  history_entry,
+            "history":        load_history(puzzle_type="sudoku")
         })
 
     except Exception as e:
