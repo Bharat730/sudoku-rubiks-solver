@@ -231,6 +231,7 @@ key.pem
 # Debug files
 debug_warped.jpg
 debug_cells/
+captures/
 test_*.jpg
 
 # Models (too large for GitHub)

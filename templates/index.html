@@ -446,23 +446,54 @@ async function startCamera(mod) {
   const status = document.getElementById(`status-${mod}`);
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 3840 },
+        height: { ideal: 2160 },
+        frameRate: { ideal: 30 }
+      }
     });
     video.srcObject = stream;
+    await video.play();
     btn.disabled = false;
-    setStatus(mod, 'success', '✅ Camera ready! Position puzzle and capture.');
+    const settings = stream.getVideoTracks()[0].getSettings();
+    const width = settings.width || video.videoWidth;
+    const height = settings.height || video.videoHeight;
+    setStatus(mod, 'success', `✅ Camera ready at ${width}×${height}. Position puzzle and capture.`);
   } catch(e) {
     setStatus(mod, 'error', '❌ Camera access denied. Allow camera in browser settings.');
   }
 }
 
-function captureFrame(mod) {
+function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function captureFrame(mod) {
   const video  = document.getElementById(`video-${mod}`);
   const canvas = document.getElementById(`canvas-${mod}`);
+
+  const stream = video.srcObject;
+  const track = stream && stream.getVideoTracks()[0];
+  if (track && window.ImageCapture) {
+    try {
+      const capture = new ImageCapture(track);
+      const blob = await capture.takePhoto();
+      return await blobToDataURL(blob);
+    } catch(e) {
+      // Fall back to the current video frame.
+    }
+  }
+
   canvas.width  = video.videoWidth;
   canvas.height = video.videoHeight;
   canvas.getContext('2d').drawImage(video, 0, 0);
-  return canvas.toDataURL('image/jpeg', 0.92);
+  return canvas.toDataURL('image/jpeg', 0.98);
 }
 
 // ══════════════════════════════════════════════════════
@@ -473,6 +504,21 @@ function setStatus(mod, type, msg) {
   const el = document.getElementById(`status-${mod}`);
   el.className = `status ${type}`;
   el.textContent = msg;
+}
+
+async function fetchJsonWithTimeout(url, options, timeoutMs = 45000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    return await res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ══════════════════════════════════════════════════════
@@ -487,15 +533,14 @@ async function captureSudoku() {
   document.getElementById('board-wrap').style.display    = 'none';
   document.getElementById('debug-sudoku').style.display  = 'none';
 
-  const imageData = captureFrame('sudoku');
+  const imageData = await captureFrame('sudoku');
 
   try {
-    const res  = await fetch('/solve/sudoku', {
+    const data = await fetchJsonWithTimeout('/solve/sudoku', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ image: imageData })
-    });
-    const data = await res.json();
+    }, 45000);
 
     if (data.success) {
       setStatus('sudoku', 'success', '✅ Puzzle solved!');
@@ -517,7 +562,14 @@ async function captureSudoku() {
       setStatus('sudoku', 'error', `❌ ${data.error}`);
     }
   } catch(e) {
-    setStatus('sudoku', 'error', '❌ Server error. Is the server running?');
+    const timedOut = e.name === 'AbortError';
+    setStatus(
+      'sudoku',
+      'error',
+      timedOut
+        ? '❌ Processing timed out. Restart the server and try a clearer capture.'
+        : '❌ Server error. Is the server running?'
+    );
   }
 
   btn.disabled = false;
@@ -612,7 +664,7 @@ let   currentFace  = 0;
 
 async function captureRubiks() {
   const face    = FACES[currentFace];
-  const imgData = captureFrame('rubiks');
+  const imgData = await captureFrame('rubiks');
   setStatus('rubiks', 'loading', `⏳ Scanning ${FACE_NAMES[face]} face...`);
 
   try {
@@ -678,7 +730,7 @@ async function solveRubiks() {
   }
 }
 async function saveDebug() {
-  const imageData = captureFrame('sudoku');
+  const imageData = await captureFrame('sudoku');
   setStatus('sudoku', 'loading', '⏳ Saving debug images...');
   const res  = await fetch('/debug/save', {
     method:  'POST',

@@ -67,6 +67,43 @@ def warp_perspective(img, contour, size=450):
     warped = cv2.warpPerspective(img, M, (size, size))
     return warped, M
 
+def crop_inner_grid(warped, size=450):
+    """Crop the actual dark Sudoku grid from a warped paper/screen image."""
+    gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+    _, mask = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY_INV)
+    mask = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    )
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    h, w = gray.shape
+    candidates = []
+
+    for contour in contours:
+        x, y, cw, ch = cv2.boundingRect(contour)
+        area = cw * ch
+        if area < (h * w) * 0.25:
+            continue
+        if x <= 2 and y <= 2 and x + cw >= w - 2 and y + ch >= h - 2:
+            continue
+        ratio = cw / ch if ch else 0
+        if 0.75 <= ratio <= 1.35:
+            candidates.append((area, x, y, cw, ch))
+
+    if not candidates:
+        return warped
+
+    _, x, y, cw, ch = max(candidates, key=lambda item: item[0])
+    inset = max(4, int(min(cw, ch) * 0.01))
+    x1 = min(w - 1, x + inset)
+    y1 = min(h - 1, y + inset)
+    x2 = max(x1 + 1, x + cw - inset)
+    y2 = max(y1 + 1, y + ch - inset)
+    cropped = warped[y1:y2, x1:x2]
+    return cv2.resize(cropped, (size, size), interpolation=cv2.INTER_AREA)
+
 def extract_cells(warped):
     """Split warped grid into 81 individual cell images."""
     cells   = []
@@ -88,7 +125,7 @@ def draw_contour(frame, contour, color=(0, 255, 0), thickness=3):
         cv2.drawContours(frame, [contour], -1, color, thickness)
     return frame
 
-def detect_grid(frame):
+def detect_grid(frame, size=450):
     """
     Main detection function.
     Returns warped grid image, contour, and transform matrix.
@@ -98,5 +135,6 @@ def detect_grid(frame):
     contour         = find_sudoku_contour(thresh)
     if contour is None:
         return None, None, None
-    warped, M = warp_perspective(frame, contour)
+    warped, M = warp_perspective(frame, contour, size=size)
+    warped = crop_inner_grid(warped, size=size)
     return warped, contour, M
