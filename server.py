@@ -386,6 +386,53 @@ def solve_rubiks():
         import traceback
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)})
+    
+@app.route("/calibrate/rubiks", methods=["POST"])
+def calibrate_rubiks():
+    """
+    Sample the center 3x3 region of each sticker and return
+    the actual HSV values so we can tune the color ranges.
+    """
+    try:
+        data  = request.get_json()
+        frame = decode_image(data["image"])
+        h, w  = frame.shape[:2]
+
+        size    = int(min(h, w) * 0.6)
+        x_start = (w - size) // 2
+        y_start = (h - size) // 2
+        cell    = size // 3
+
+        results = []
+        for row in range(3):
+            for col in range(3):
+                cx = x_start + col * cell + cell // 2
+                cy = y_start + row * cell + cell // 2
+                s  = cell // 4
+
+                region  = frame[max(0,cy-s):cy+s, max(0,cx-s):cx+s]
+                avg_bgr = region.mean(axis=(0,1)).astype(int).tolist()
+                avg_hsv = cv2.cvtColor(
+                    np.uint8([[region.mean(axis=(0,1))]]),
+                    cv2.COLOR_BGR2HSV
+                )[0][0].tolist()
+
+                results.append({
+                    "cell":    f"row{row}_col{col}",
+                    "bgr":     avg_bgr,
+                    "hsv":     avg_hsv,
+                    "h": avg_hsv[0],
+                    "s": avg_hsv[1],
+                    "v": avg_hsv[2]
+                })
+                print(f"  [{row}][{col}] HSV={avg_hsv}  BGR={avg_bgr}")
+
+        return jsonify({"success": True, "samples": results})
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)})
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 

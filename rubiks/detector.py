@@ -1,29 +1,29 @@
 import cv2
 import numpy as np
 
-# ── Color definitions in HSV ──────────────────────────────────────────────────
-# Each color has a list of (lower, upper) HSV ranges
-# Some colors like red wrap around 180 so need two ranges
+# ── Color definitions calibrated from your cube ───────────────────────────────
+# Format: list of (lower_hsv, upper_hsv)
+# Red wraps around H=0/180 so it needs two ranges
 
 COLOR_RANGES = {
-    'U': [  # White
-        (np.array([0,   0,   180]), np.array([180, 40,  255]))
+    'U': [  # White — low saturation (your white S=9-25, V=37-182)
+        (np.array([0,   0,   35]),  np.array([180, 35,  255]))
     ],
-    'D': [  # Yellow
-        (np.array([20,  100, 100]), np.array([35,  255, 255]))
+    'D': [  # Yellow — H=20-27, high S
+        (np.array([18,  80,  25]),  np.array([28,  255, 255]))
     ],
-    'F': [  # Green
-        (np.array([45,  80,  80]),  np.array([85,  255, 255]))
+    'F': [  # Green — H=33-48, high S (clear gap above yellow)
+        (np.array([33,  160, 25]),  np.array([50,  255, 255]))
     ],
-    'B': [  # Blue
-        (np.array([95,  80,  80]),  np.array([130, 255, 255]))
+    'B': [  # Blue — H=104-110, S=87-190, V=58-206 (your data)
+        (np.array([103, 80,  50]),  np.array([116, 255, 255]))
     ],
-    'L': [  # Orange
-        (np.array([8,   150, 150]), np.array([20,  255, 255]))
+    'L': [  # Orange — H=9-13, S=185-254, V=117-199 (your data)
+        (np.array([7,   170, 100]), np.array([16,  255, 255]))
     ],
-    'R': [  # Red — wraps around hue=0
-        (np.array([0,   150, 150]), np.array([8,   255, 255])),
-        (np.array([170, 150, 150]), np.array([180, 255, 255]))
+    'R': [  # Red — H=0-4, S=180-244, V=139-233 (your data)
+        (np.array([0,   160, 100]), np.array([5,   255, 255])),
+        (np.array([168, 160, 100]), np.array([180, 255, 255]))
     ],
 }
 
@@ -34,34 +34,42 @@ COLOR_DISPLAY = {
     'B': ('Blue',   (200, 100, 0  )),
     'L': ('Orange', (0,   140, 255)),
     'R': ('Red',    (0,   0,   220)),
+    '?': ('Unknown',(128, 128, 128)),
 }
 
 # ── Color detection ───────────────────────────────────────────────────────────
 
-def classify_color(bgr_pixel):
+def classify_color(bgr_region):
     """
-    Given a BGR pixel value, return the face letter (U/D/F/B/L/R).
-    Returns '?' if no color matched.
+    Given a BGR region (numpy array), classify its color.
+    Uses the median pixel to avoid outlier influence.
+    Returns face letter or '?'.
     """
-    hsv = cv2.cvtColor(
-        np.uint8([[bgr_pixel]]), cv2.COLOR_BGR2HSV
-    )[0][0]
+    # Use median for robustness
+    median_bgr = np.median(bgr_region.reshape(-1, 3), axis=0).astype(np.uint8)
+    hsv = cv2.cvtColor(np.uint8([[median_bgr]]), cv2.COLOR_BGR2HSV)[0][0]
 
-    best_face  = '?'
-    best_score = 0
+    h, s, v = int(hsv[0]), int(hsv[1]), int(hsv[2])
 
+    # Too dark to classify
+    if v < 25:
+        return '?'
+
+    # White: very low saturation (S < 50 from your calibration data)
+    if s < 50:
+        return 'U'
+
+    # Check each color range
     for face, ranges in COLOR_RANGES.items():
+        if face == 'U':
+            continue
         for (lo, hi) in ranges:
-            # Check if hsv is within range
-            in_range = all(lo[i] <= hsv[i] <= hi[i] for i in range(3))
-            if in_range:
-                # Score by saturation+value for confidence
-                score = int(hsv[1]) + int(hsv[2])
-                if score > best_score:
-                    best_score = score
-                    best_face  = face
+            if (lo[0] <= h <= hi[0] and
+                lo[1] <= s <= hi[1] and
+                lo[2] <= v <= hi[2]):
+                return face
 
-    return best_face
+    return '?'
 
 def extract_face_colors(frame):
     """
@@ -69,53 +77,53 @@ def extract_face_colors(frame):
     detect the 3x3 grid of sticker colors.
 
     Returns:
-      colors: 3x3 list of face letters e.g. [['U','R','F'], ...]
+      colors: 3x3 list of face letters
       annotated: frame with color boxes drawn
     """
     h, w = frame.shape[:2]
     annotated = frame.copy()
 
-    # Define a centered square region (60% of smaller dimension)
-    size   = int(min(h, w) * 0.6)
+    # Centered square region — 60% of shorter dimension
+    size    = int(min(h, w) * 0.6)
     x_start = (w - size) // 2
     y_start = (h - size) // 2
-    cell   = size // 3
+    cell    = size // 3
 
     colors = []
     for row in range(3):
         row_colors = []
         for col in range(3):
-            # Center of each sticker
-            cx = x_start + col * cell + cell // 2
-            cy = y_start + row * cell + cell // 2
+            # Cell boundaries
+            x1c = x_start + col * cell
+            y1c = y_start + row * cell
+            x2c = x1c + cell
+            y2c = y1c + cell
 
-            # Sample a small region around center (avoid edges)
-            sample_size = cell // 4
-            region = frame[
-                max(0, cy - sample_size): cy + sample_size,
-                max(0, cx - sample_size): cx + sample_size
-            ]
+            # Sample inner 50% of cell to avoid grid lines/edges
+            pad_x = cell // 4
+            pad_y = cell // 4
+            sx1 = max(0, x1c + pad_x)
+            sy1 = max(0, y1c + pad_y)
+            sx2 = min(w,  x2c - pad_x)
+            sy2 = min(h,  y2c - pad_y)
 
+            region = frame[sy1:sy2, sx1:sx2]
             if region.size == 0:
                 row_colors.append('?')
                 continue
 
-            # Average color of region
-            avg_bgr = region.mean(axis=(0, 1)).astype(np.uint8)
-            face    = classify_color(avg_bgr)
+            face = classify_color(region)
             row_colors.append(face)
 
-            # Draw box on annotated frame
-            x1 = x_start + col * cell + 4
-            y1 = y_start + row * cell + 4
-            x2 = x_start + (col + 1) * cell - 4
-            y2 = y_start + (row + 1) * cell - 4
-
-            color_bgr = COLOR_DISPLAY.get(face, ('?', (128,128,128)))[1]
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), color_bgr, -1)
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 0, 0), 2)
-            cv2.putText(annotated, face, (x1+8, y2-8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 2)
+            # Draw filled box on annotated frame
+            color_bgr = COLOR_DISPLAY.get(face, COLOR_DISPLAY['?'])[1]
+            cv2.rectangle(annotated, (x1c+3, y1c+3), (x2c-3, y2c-3), color_bgr, -1)
+            cv2.rectangle(annotated, (x1c+3, y1c+3), (x2c-3, y2c-3), (0,0,0), 2)
+            cv2.putText(annotated, face,
+                        (x1c + cell//4, y2c - cell//4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                        (0, 0, 0) if face == 'U' else (255, 255, 255),
+                        2)
 
         colors.append(row_colors)
 
@@ -133,16 +141,12 @@ def face_to_string(colors_3x3):
 
 def build_cube_string(faces):
     """
-    faces: dict with keys U,R,F,D,L,B each being a 9-char string
-    kociemba expects: U R F D L B order
+    faces: dict with keys U,R,F,D,L,B each being a 9-char string.
+    kociemba expects: U R F D L B order.
     """
     order = ['U', 'R', 'F', 'D', 'L', 'B']
     return ''.join(faces[f] for f in order)
 
 def validate_face(colors_3x3):
-    """Check if all 9 colors were detected (no '?')."""
-    for row in colors_3x3:
-        for c in row:
-            if c == '?':
-                return False
-    return True
+    """Check if all 9 stickers were detected (no '?')."""
+    return all(c != '?' for row in colors_3x3 for c in row)
