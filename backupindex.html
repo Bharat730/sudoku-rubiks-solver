@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Puzzle Solver</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #0f0f1a;
+      color: #eee;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1a1a2e;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 2px solid #6c63ff;
+    }
+
+    header h1 { font-size: 1.3rem; color: #fff; }
+    header span { font-size: 1.6rem; }
+
+    /* ── Tabs ── */
+    .tabs {
+      display: flex;
+      background: #16213e;
+      border-bottom: 2px solid #222;
+    }
+
+    .tab {
+      flex: 1;
+      padding: 14px;
+      text-align: center;
+      cursor: pointer;
+      font-weight: 600;
+      color: #888;
+      transition: all 0.2s;
+      font-size: 0.95rem;
+    }
+
+    .tab.active {
+      color: #6c63ff;
+      border-bottom: 3px solid #6c63ff;
+      background: #1a1a2e;
+    }
+
+    /* ── Main content ── */
+    .content { padding: 20px; max-width: 600px; margin: 0 auto; }
+
+    .module { display: none; }
+    .module.active { display: block; }
+
+    /* ── Camera box ── */
+    .camera-wrap {
+      position: relative;
+      width: 100%;
+      background: #000;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 2px solid #333;
+    }
+
+    #video-sudoku, #video-rubiks {
+      width: 100%;
+      display: block;
+      border-radius: 10px;
+    }
+
+    /* Guide overlay on video */
+    .guide-box {
+      position: absolute;
+      top: 10%; left: 10%;
+      width: 80%; height: 80%;
+      border: 3px solid #6c63ff;
+      border-radius: 8px;
+      pointer-events: none;
+    }
+
+    .guide-label {
+      position: absolute;
+      bottom: 12%;
+      width: 100%;
+      text-align: center;
+      color: #6c63ff;
+      font-size: 0.8rem;
+      font-weight: 600;
+      pointer-events: none;
+    }
+
+    /* ── Buttons ── */
+    .btn-row {
+      display: flex;
+      gap: 10px;
+      margin: 14px 0;
+    }
+
+    button {
+      flex: 1;
+      padding: 13px;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: #6c63ff;
+      color: #fff;
+    }
+
+    .btn-primary:hover { background: #574fd6; }
+    .btn-primary:disabled { background: #444; cursor: not-allowed; }
+
+    .btn-secondary {
+      background: #222;
+      color: #aaa;
+      border: 1px solid #444;
+    }
+
+    /* ── Status ── */
+    .status {
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin: 10px 0;
+      font-size: 0.9rem;
+      display: none;
+    }
+
+    .status.info    { background: #1e3a5f; color: #7ec8e3; display: block; }
+    .status.success { background: #1a3a2a; color: #6fcf97; display: block; }
+    .status.error   { background: #3a1a1a; color: #eb5757; display: block; }
+    .status.loading { background: #2a2a1a; color: #f2c94c; display: block; }
+
+    /* ── Result image ── */
+    .result-img {
+      width: 100%;
+      border-radius: 12px;
+      margin: 12px 0;
+      border: 2px solid #333;
+      display: none;
+    }
+
+    /* ── Board display ── */
+    .board {
+      display: grid;
+      grid-template-columns: repeat(9, 1fr);
+      gap: 2px;
+      margin: 12px 0;
+      background: #6c63ff;
+      border-radius: 8px;
+      padding: 3px;
+    }
+
+    .cell {
+      background: #1a1a2e;
+      aspect-ratio: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      font-weight: 700;
+      border-radius: 3px;
+    }
+
+    .cell.given  { color: #fff; }
+    .cell.solved { color: #6c63ff; }
+    .cell.empty  { color: #444; }
+
+    /* 3x3 box borders */
+    .cell:nth-child(3n) { border-right: 2px solid #6c63ff; }
+    .cell:nth-child(n+19):nth-child(-n+27),
+    .cell:nth-child(n+46):nth-child(-n+54) {
+      border-bottom: 2px solid #6c63ff;
+    }
+
+    .history-section {
+      margin-top: 16px;
+      background: #111;
+      border-radius: 10px;
+      padding: 12px;
+      display: none;
+    }
+
+    .history-section h4 {
+      color: #aaa;
+      font-size: 0.9rem;
+      margin-bottom: 10px;
+    }
+
+    .history-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .history-item {
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 10px;
+      background: #151522;
+    }
+
+    .history-meta {
+      color: #888;
+      font-size: 0.75rem;
+      margin-bottom: 8px;
+    }
+
+    .history-board {
+      display: grid;
+      grid-template-columns: repeat(9, 1fr);
+      gap: 1px;
+      background: #555;
+      border-radius: 6px;
+      padding: 2px;
+    }
+
+    .history-cell {
+      background: #1a1a2e;
+      aspect-ratio: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.72rem;
+      font-weight: 700;
+      border-radius: 2px;
+    }
+
+    .history-cell.given { color: #fff; }
+    .history-cell.solved { color: #6c63ff; }
+
+    /* ── Debug section ── */
+    .debug-section {
+      margin-top: 16px;
+      background: #111;
+      border-radius: 10px;
+      padding: 12px;
+      display: none;
+    }
+
+    .debug-section h4 {
+      color: #888;
+      font-size: 0.85rem;
+      margin-bottom: 8px;
+    }
+
+    .debug-section img {
+      width: 100%;
+      border-radius: 6px;
+    }
+
+    /* ── Rubik face scanner ── */
+    .face-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px;
+      width: 120px;
+      margin: 0 auto 12px;
+    }
+
+    .face-cell {
+      aspect-ratio: 1;
+      border-radius: 4px;
+      border: 2px solid #444;
+    }
+
+    .faces-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin: 12px 0;
+    }
+
+    .face-item {
+      text-align: center;
+      font-size: 0.75rem;
+      color: #888;
+    }
+
+    .face-item.done { color: #6fcf97; }
+    .face-item.active { color: #f2c94c; }
+
+    .moves-list {
+      background: #111;
+      border-radius: 10px;
+      padding: 12px;
+      margin-top: 12px;
+    }
+
+    .moves-list h4 { color: #aaa; margin-bottom: 8px; font-size: 0.9rem; }
+
+    .move-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .chip {
+      background: #6c63ff22;
+      border: 1px solid #6c63ff;
+      color: #6c63ff;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 700;
+    }
+
+    canvas { display: none; }
+  </style>
+</head>
+<body>
+
+<header>
+  <span>🧩</span>
+  <h1>Puzzle Solver</h1>
+</header>
+
+<!-- Tabs -->
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('sudoku')">📷 Sudoku</div>
+  <div class="tab" onclick="switchTab('rubiks')">🎲 Rubik's Cube</div>
+</div>
+
+<div class="content">
+
+  <!-- ══════════════ SUDOKU MODULE ══════════════ -->
+  <div class="module active" id="mod-sudoku">
+
+    <div class="camera-wrap" style="margin-top:16px">
+      <video id="video-sudoku" autoplay playsinline></video>
+      <div class="guide-box"></div>
+      <div class="guide-label">Keep full grid inside the box</div>
+    </div>
+    <canvas id="canvas-sudoku"></canvas>
+
+    <div class="btn-row">
+      <button class="btn-secondary" onclick="startCamera('sudoku')">📷 Start Camera</button>
+      <button class="btn-primary" id="btn-capture-sudoku" onclick="captureSudoku()" disabled>
+        ⚡ Capture & Solve
+      </button>
+    </div>
+    <button class="btn-secondary" onclick="saveDebug()" style="width:100%;margin-bottom:8px">
+      🔍 Save Debug Images
+    </button>
+
+    <div id="status-sudoku" class="status info">Start camera and point at your sudoku puzzle.</div>
+    <img id="result-sudoku" class="result-img" alt="Result"/>
+
+    <div id="board-wrap" style="display:none">
+      <p style="color:#888; font-size:0.85rem; margin:8px 0">
+        <span style="color:#fff">■</span> Given &nbsp;
+        <span style="color:#6c63ff">■</span> Solved
+      </p>
+      <div class="board" id="board-grid"></div>
+    </div>
+
+    <div class="history-section" id="history-sudoku">
+      <h4>Recent Solved Sudoku Grids</h4>
+      <div class="history-list" id="history-sudoku-list"></div>
+    </div>
+
+    <div class="debug-section" id="debug-sudoku">
+      <h4>🔍 Debug — Warped Grid</h4>
+      <img id="debug-warped" alt="warped"/>
+    </div>
+
+  </div>
+
+  <!-- ══════════════ RUBIK'S MODULE ══════════════ -->
+  <div class="module" id="mod-rubiks">
+
+    <div style="margin-top:16px; text-align:center">
+      <p style="color:#aaa; margin-bottom:12px">
+        Scan each face of the cube one by one.
+      </p>
+
+      <!-- Face progress indicators -->
+      <div class="faces-row" id="faces-row">
+        <div class="face-item active" id="face-U">⬆ Up</div>
+        <div class="face-item" id="face-D">⬇ Down</div>
+        <div class="face-item" id="face-F">▶ Front</div>
+        <div class="face-item" id="face-B">◀ Back</div>
+        <div class="face-item" id="face-L">◁ Left</div>
+        <div class="face-item" id="face-R">▷ Right</div>
+      </div>
+    </div>
+
+    <div class="camera-wrap">
+      <video id="video-rubiks" autoplay playsinline></video>
+      <div class="guide-box"></div>
+      <div class="guide-label">Center the face inside the box</div>
+    </div>
+    <canvas id="canvas-rubiks"></canvas>
+
+    <div class="btn-row">
+      <button class="btn-secondary" onclick="startCamera('rubiks')">📷 Start Camera</button>
+      <button class="btn-primary" id="btn-capture-rubiks" onclick="captureRubiks()" disabled>
+        📸 Scan This Face
+      </button>
+    </div>
+
+    <button class="btn-primary" id="btn-solve-rubiks" onclick="solveRubiks()"
+      style="width:100%; display:none; margin-bottom:10px">
+      ⚡ Solve Cube
+    </button>
+
+    <div id="status-rubiks" class="status info">Start camera and scan the Up face first.</div>
+
+    <div class="moves-list" id="moves-wrap" style="display:none">
+      <h4>📋 Solution Steps</h4>
+      <div class="move-chips" id="move-chips"></div>
+    </div>
+
+  </div>
+
+</div><!-- /content -->
+
+<script>
+// ══════════════════════════════════════════════════════
+// TAB SWITCHING
+// ══════════════════════════════════════════════════════
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    t.classList.toggle('active', (i === 0 && tab==='sudoku') || (i===1 && tab==='rubiks'));
+  });
+  document.getElementById('mod-sudoku').classList.toggle('active', tab==='sudoku');
+  document.getElementById('mod-rubiks').classList.toggle('active', tab==='rubiks');
+}
+
+// ══════════════════════════════════════════════════════
+// CAMERA
+// ══════════════════════════════════════════════════════
+
+async function startCamera(mod) {
+  const video  = document.getElementById(`video-${mod}`);
+  const btn    = document.getElementById(`btn-capture-${mod}`);
+  const status = document.getElementById(`status-${mod}`);
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 3840 },
+        height: { ideal: 2160 },
+        frameRate: { ideal: 30 }
+      }
+    });
+    video.srcObject = stream;
+    await video.play();
+    btn.disabled = false;
+    const settings = stream.getVideoTracks()[0].getSettings();
+    const width = settings.width || video.videoWidth;
+    const height = settings.height || video.videoHeight;
+    setStatus(mod, 'success', `✅ Camera ready at ${width}×${height}. Position puzzle and capture.`);
+  } catch(e) {
+    setStatus(mod, 'error', '❌ Camera access denied. Allow camera in browser settings.');
+  }
+}
+
+function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function captureFrame(mod) {
+  const video  = document.getElementById(`video-${mod}`);
+  const canvas = document.getElementById(`canvas-${mod}`);
+
+  const stream = video.srcObject;
+  const track = stream && stream.getVideoTracks()[0];
+  if (track && window.ImageCapture) {
+    try {
+      const capture = new ImageCapture(track);
+      const blob = await capture.takePhoto();
+      return await blobToDataURL(blob);
+    } catch(e) {
+      // Fall back to the current video frame.
+    }
+  }
+
+  canvas.width  = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+  return canvas.toDataURL('image/jpeg', 0.98);
+}
+
+// ══════════════════════════════════════════════════════
+// STATUS HELPER
+// ══════════════════════════════════════════════════════
+
+function setStatus(mod, type, msg) {
+  const el = document.getElementById(`status-${mod}`);
+  el.className = `status ${type}`;
+  el.textContent = msg;
+}
+
+async function fetchJsonWithTimeout(url, options, timeoutMs = 45000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    return await res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// ══════════════════════════════════════════════════════
+// SUDOKU
+// ══════════════════════════════════════════════════════
+
+async function captureSudoku() {
+  const btn = document.getElementById('btn-capture-sudoku');
+  btn.disabled = true;
+  setStatus('sudoku', 'loading', '⏳ Processing... please wait.');
+  document.getElementById('result-sudoku').style.display = 'none';
+  document.getElementById('board-wrap').style.display    = 'none';
+  document.getElementById('debug-sudoku').style.display  = 'none';
+
+  const imageData = await captureFrame('sudoku');
+
+  try {
+    const data = await fetchJsonWithTimeout('/solve/sudoku', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ image: imageData })
+    }, 45000);
+
+    if (data.success) {
+      setStatus('sudoku', 'success', '✅ Puzzle solved!');
+
+      // Show result image
+      const img = document.getElementById('result-sudoku');
+      img.src = data.result_image;
+      img.style.display = 'block';
+
+      // Render board
+      renderBoard(data.original_board, data.solved_board);
+      renderHistory(data.history || []);
+
+      // Debug: warped grid
+      document.getElementById('debug-sudoku').style.display = 'block';
+      document.getElementById('debug-warped').src = data.warped_image;
+
+    } else {
+      setStatus('sudoku', 'error', `❌ ${data.error}`);
+    }
+  } catch(e) {
+    const timedOut = e.name === 'AbortError';
+    setStatus(
+      'sudoku',
+      'error',
+      timedOut
+        ? '❌ Processing timed out. Restart the server and try a clearer capture.'
+        : '❌ Server error. Is the server running?'
+    );
+  }
+
+  btn.disabled = false;
+}
+
+function renderBoard(original, solved) {
+  const grid = document.getElementById('board-grid');
+  grid.innerHTML = '';
+  for (let r = 0; r < 9; r++) {
+    for (let c = 0; c < 9; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      if (original[r][c] !== 0) {
+        cell.textContent = original[r][c];
+        cell.classList.add('given');
+      } else if (solved[r][c] !== 0) {
+        cell.textContent = solved[r][c];
+        cell.classList.add('solved');
+      } else {
+        cell.classList.add('empty');
+      }
+      grid.appendChild(cell);
+    }
+  }
+  document.getElementById('board-wrap').style.display = 'block';
+}
+
+async function loadHistory() {
+  try {
+    const res = await fetch('/history?type=sudoku');
+    const data = await res.json();
+    if (data.success) {
+      renderHistory(data.history || []);
+    }
+  } catch(e) {
+    // History is optional; solving still works if it cannot load.
+  }
+}
+
+function renderHistory(history) {
+  const wrap = document.getElementById('history-sudoku');
+  const list = document.getElementById('history-sudoku-list');
+  list.innerHTML = '';
+
+  if (!history.length) {
+    wrap.style.display = 'none';
+    return;
+  }
+
+  history.forEach(item => {
+    const entry = document.createElement('div');
+    entry.className = 'history-item';
+
+    const meta = document.createElement('div');
+    meta.className = 'history-meta';
+    const when = item.timestamp ? new Date(item.timestamp).toLocaleString() : 'Saved solve';
+    meta.textContent = `${when} · ${item.digits_found || 0} givens`;
+
+    entry.appendChild(meta);
+    entry.appendChild(renderMiniBoard(item.original_board, item.solved_board));
+    list.appendChild(entry);
+  });
+
+  wrap.style.display = 'block';
+}
+
+function renderMiniBoard(original, solved) {
+  const grid = document.createElement('div');
+  grid.className = 'history-board';
+
+  for (let r = 0; r < 9; r++) {
+    for (let c = 0; c < 9; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'history-cell';
+      cell.textContent = solved[r][c];
+      cell.classList.add(original[r][c] !== 0 ? 'given' : 'solved');
+      grid.appendChild(cell);
+    }
+  }
+
+  return grid;
+}
+
+// ══════════════════════════════════════════════════════
+// RUBIK'S CUBE
+// ══════════════════════════════════════════════════════
+
+const FACES      = ['U','D','F','B','L','R'];
+const FACE_NAMES = {U:'Up',D:'Down',F:'Front',B:'Back',L:'Left',R:'Right'};
+let   scannedFaces = {};
+let   currentFace  = 0;
+
+async function captureRubiks() {
+  const face    = FACES[currentFace];
+  const imgData = await captureFrame('rubiks');
+  setStatus('rubiks', 'loading', `⏳ Scanning ${FACE_NAMES[face]} face...`);
+
+  try {
+    const res  = await fetch('/scan/rubiks', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ image: imgData, face: face })
+    });
+    const data = await res.json();
+
+    if (data.success) {
+      scannedFaces[face] = data.colors;
+      document.getElementById(`face-${face}`).classList.remove('active');
+      document.getElementById(`face-${face}`).classList.add('done');
+      document.getElementById(`face-${face}`).textContent =
+        `✅ ${FACE_NAMES[face]}`;
+
+      currentFace++;
+      if (currentFace < FACES.length) {
+        const next = FACES[currentFace];
+        document.getElementById(`face-${next}`).classList.add('active');
+        setStatus('rubiks', 'success',
+          `✅ ${FACE_NAMES[face]} scanned! Now show the ${FACE_NAMES[next]} face.`);
+      } else {
+        setStatus('rubiks', 'success', '✅ All faces scanned! Click Solve Cube.');
+        document.getElementById('btn-solve-rubiks').style.display = 'block';
+        document.getElementById('btn-capture-rubiks').disabled = true;
+      }
+    } else {
+      setStatus('rubiks', 'error', `❌ ${data.error}`);
+    }
+  } catch(e) {
+    setStatus('rubiks', 'error', '❌ Server error.');
+  }
+}
+
+async function solveRubiks() {
+  setStatus('rubiks', 'loading', '⏳ Solving cube...');
+  try {
+    const res  = await fetch('/solve/rubiks', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ faces: scannedFaces })
+    });
+    const data = await res.json();
+
+    if (data.success) {
+      setStatus('rubiks', 'success', `✅ Solved in ${data.moves.length} moves!`);
+      const chips = document.getElementById('move-chips');
+      chips.innerHTML = '';
+      data.moves.forEach(m => {
+        const chip = document.createElement('span');
+        chip.className   = 'chip';
+        chip.textContent = m;
+        chips.appendChild(chip);
+      });
+      document.getElementById('moves-wrap').style.display = 'block';
+    } else {
+      setStatus('rubiks', 'error', `❌ ${data.error}`);
+    }
+  } catch(e) {
+    setStatus('rubiks', 'error', '❌ Server error.');
+  }
+}
+async function saveDebug() {
+  const imageData = await captureFrame('sudoku');
+  setStatus('sudoku', 'loading', '⏳ Saving debug images...');
+  const res  = await fetch('/debug/save', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ image: imageData })
+  });
+  const data = await res.json();
+  setStatus('sudoku', data.success ? 'success' : 'error',
+    data.success ? '✅ ' + data.message : '❌ ' + data.error);
+}
+
+loadHistory();
+</script>
+</body>
+</html>
